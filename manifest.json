@@ -2,9 +2,9 @@
   "schemaVersion": 1,
   "id": "shikhar.warp",
   "name": "Cloudflare WARP",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "author": "shikhar",
-  "description": "Cloudflare WARP status, on/off switch, mode picker, and connection details in the Omarchy bar.",
+  "description": "Cloudflare WARP status, on/off switch, mode picker, connection details, and one-click setup in the Omarchy bar.",
   "kinds": ["bar-widget"],
   "entryPoints": { "barWidget": "Panel.qml" },
   "barWidget": {

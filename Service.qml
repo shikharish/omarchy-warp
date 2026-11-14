@@ -1,10 +1,11 @@
 import QtQuick
 import Quickshell
 import Quickshell.Io
+import qs.Commons
 
-// Talks to warp-svc through warp-cli. Every command is an argv array with
-// fixed arguments (modes come from a closed list), so nothing from the CLI
-// or the network is ever interpolated into a shell.
+// Talks to warp-svc through warp-cli. Every command is an argv array or a
+// fixed command line, with fixed arguments (modes come from a closed list),
+// so nothing from the CLI or the network is ever interpolated into a shell.
 Item {
   id: root
 
@@ -17,6 +18,7 @@ Item {
 
   property bool installed: true
   property bool serviceUp: true
+  property bool registered: true
   property string status: ""
   property string reason: ""
   property string mode: ""
@@ -38,6 +40,21 @@ Item {
   readonly property bool transitioning: _desired !== -1 || status === "Connecting"
   readonly property bool busy: toggleProc.running || modeProc.running
 
+  // What still stands between this machine and a working WARP, in the order
+  // install-warp.sh fixes it: "install", "service", "register", or "" once
+  // everything is in place.
+  readonly property string setupStep: !installed ? "install" : (!serviceUp ? "service" : (!registered ? "register" : ""))
+  readonly property bool ready: setupStep === ""
+  // Set while the setup terminal may still be running, so the bar follows
+  // each step it finishes without anyone opening the panel.
+  property bool watchingSetup: false
+
+  // The setup script ships beside this file; empty if that is not a local file.
+  readonly property string installerPath: {
+    var url = String(Qt.resolvedUrl("install-warp.sh"))
+    return url.indexOf("file://") === 0 ? decodeURIComponent(url.slice(7)) : ""
+  }
+
   readonly property int refreshIntervalSec: {
     var n = parseInt(String(settings && settings.refreshIntervalSec !== undefined ? settings.refreshIntervalSec : 5), 10)
     return isFinite(n) ? Math.max(2, Math.min(300, n)) : 5
@@ -48,12 +65,24 @@ Item {
     return s.length > max ? s.slice(0, max) : s
   }
 
+  // Also notices warp-cli appearing or going away, so an install or removal
+  // shows without a shell restart.
   function refresh() {
     if (!statusProc.running) statusProc.running = true
   }
 
+  // Opens install-warp.sh in Omarchy's floating terminal. The launcher takes
+  // one shell command line, so the script's own path is quoted whole.
+  function openInstaller() {
+    if (installerPath === "") return false
+    Quickshell.execDetached(["omarchy-launch-floating-terminal-with-presentation", "bash " + Util.shellQuote(installerPath)])
+    watchingSetup = true
+    setupWatchTimer.restart()
+    return true
+  }
+
   function refreshDetails() {
-    if (!installed) return
+    if (!ready) return
     if (!settingsProc.running) settingsProc.running = true
     if (!registrationProc.running) registrationProc.running = true
     refreshTrace()
@@ -65,7 +94,7 @@ Item {
   }
 
   function toggle() {
-    if (!installed || toggleProc.running) return
+    if (!ready || toggleProc.running) return
     var turnOn = !active
     _desired = turnOn ? 1 : 0
     errorKind = ""
@@ -76,7 +105,7 @@ Item {
   }
 
   function setMode(next) {
-    if (!installed || modeProc.running || knownModes.indexOf(next) === -1 || next === mode) return
+    if (!ready || modeProc.running || knownModes.indexOf(next) === -1 || next === mode) return
     settingMode = next
     errorKind = ""
     errorText = ""
@@ -90,6 +119,9 @@ Item {
       status = clip(data.status, 40)
       reason = clip(data.reason, 80)
       serviceUp = true
+      // An unregistered client reports RegistrationMissing as the reason
+      // ("Registration Missing" in its text output).
+      registered = !/Registration ?Missing/i.test(text)
     } catch (e) {
       serviceUp = false
       status = ""
@@ -140,24 +172,23 @@ Item {
 
   onConnectedChanged: if (detailsWanted) refreshTrace()
   onDetailsWantedChanged: if (detailsWanted) { refresh(); refreshDetails() }
+  onReadyChanged: if (ready) { watchingSetup = false; if (detailsWanted) refreshDetails() }
 
-  Process {
-    id: whichProc
-    running: true
-    command: ["sh", "-c", "command -v warp-cli >/dev/null"]
-    onExited: function(exitCode) {
-      root.installed = exitCode === 0
-      if (root.installed) root.refresh()
-    }
-  }
-
+  // A fixed command line with nothing interpolated. Exit 127 means warp-cli
+  // is not on PATH; a missing binary passed straight to Process would fail to
+  // start without ever reporting an exit.
   Process {
     id: statusProc
-    command: ["warp-cli", "-j", "--accept-tos", "status"]
+    running: true
+    command: ["sh", "-c", "command -v warp-cli >/dev/null || exit 127; exec warp-cli -j --accept-tos status"]
     stdout: StdioCollector { id: statusOut; waitForEnd: true }
     onExited: function(exitCode) {
+      root.installed = exitCode !== 127
       if (exitCode === 0) root.parseStatus(String(statusOut.text || ""))
-      else root.serviceUp = false
+      else {
+        root.serviceUp = false
+        root.status = ""
+      }
     }
   }
 
@@ -218,10 +249,21 @@ Item {
     onTriggered: root._desired = -1
   }
 
-  // Poll fast while a change settles, at the configured pace otherwise.
+  // Gives up following the setup terminal after ten minutes.
   Timer {
-    interval: root.transitioning ? 1000 : root.refreshIntervalSec * 1000
-    running: root.installed
+    id: setupWatchTimer
+    interval: 600000
+    onTriggered: root.watchingSetup = false
+  }
+
+  // Poll fast while a change settles or while setup is under way (the
+  // terminal is open, or the panel shows a setup step), at the configured
+  // pace otherwise, and only every 30s while warp-cli is missing.
+  Timer {
+    interval: root.transitioning ? 1000
+      : (!root.ready && (root.watchingSetup || root.detailsWanted)) ? 2000
+      : root.installed ? root.refreshIntervalSec * 1000 : 30000
+    running: true
     repeat: true
     onTriggered: root.refresh()
   }

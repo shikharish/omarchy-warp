@@ -2,7 +2,8 @@ import QtQuick
 import qs.Commons
 import qs.Commons as Commons
 
-// Cloud mark with the same off-state slash the Tailscale icon uses.
+// Cloud mark with the same off-state slash the Tailscale icon uses, and a
+// small dot when WARP still needs setting up.
 Item {
   id: root
 
@@ -11,6 +12,8 @@ Item {
   property string fontFamily: Style.font.family
   property bool crossed: false
   property bool pulsing: false
+  property bool needsSetup: false
+  property color badgeColor: Commons.Color.urgent
 
   width: iconSize
   height: iconSize
@@ -43,5 +46,17 @@ Item {
     radius: height / 2
     color: root.color
     rotation: -45
+  }
+
+  Rectangle {
+    visible: root.needsSetup
+    width: Math.max(4, Math.round(root.iconSize * 0.36))
+    height: width
+    radius: width / 2
+    anchors.right: parent.right
+    anchors.top: parent.top
+    anchors.rightMargin: -Math.round(width * 0.2)
+    anchors.topMargin: Math.round(width * 0.1)
+    color: root.badgeColor
   }
 }

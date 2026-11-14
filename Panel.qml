@@ -30,11 +30,12 @@ Panel {
   readonly property color barIconColor: warp.active ? barForeground : Qt.darker(barForeground, 1.55)
   readonly property color hoverFill: bar ? Style.hoverFillFor(bar.foreground, Commons.Color.accent) : "transparent"
   readonly property color selectedFill: bar ? Style.selectedFillFor(bar.foreground, Commons.Color.accent) : "transparent"
-  readonly property bool usable: warp.installed && warp.serviceUp
+  readonly property bool usable: warp.ready
 
   readonly property string statusLine: {
-    if (!warp.installed) return strings.t("notInstalled")
-    if (!warp.serviceUp) return strings.t("serviceDown")
+    if (warp.setupStep === "install") return strings.t("notInstalled")
+    if (warp.setupStep === "service") return strings.t("serviceDown")
+    if (warp.setupStep === "register") return strings.t("notRegistered")
     if (warp._desired === 1 || (warp._desired === -1 && warp.status === "Connecting")) return strings.t("connecting")
     if (warp._desired === 0) return strings.t("disconnecting")
     if (warp.connected) {
@@ -42,6 +43,20 @@ Panel {
       return where !== "" ? strings.t("connectedAt").arg(where) : strings.t("connected")
     }
     return strings.t("disconnected")
+  }
+
+  readonly property string setupLabel: {
+    if (warp.setupStep === "install") return strings.t("setupInstall")
+    if (warp.setupStep === "service") return strings.t("setupService")
+    if (warp.setupStep === "register") return strings.t("setupRegister")
+    return ""
+  }
+
+  readonly property string setupDetail: {
+    if (warp.setupStep === "install") return strings.t("setupInstallDetail")
+    if (warp.setupStep === "service") return strings.t("setupServiceDetail")
+    if (warp.setupStep === "register") return strings.t("setupRegisterDetail")
+    return ""
   }
 
   readonly property string errorLine: {
@@ -62,11 +77,17 @@ Panel {
     Quickshell.execDetached(["notify-send", "-t", "2000", strings.t("title"), strings.t("copied").arg(warp.exitIp)])
   }
 
+  // The terminal takes over from here; the bar keeps following its progress.
+  function startSetup() {
+    if (warp.openInstaller()) root.close()
+  }
+
   function moveCursor(dy) {
     cursorActive = true
-    if (!usable) { focusSection = "header"; return }
-    if (focusSection === "header") {
+    if (!usable) { focusSection = "setup"; return }
+    if (focusSection !== "modes") {
       if (dy > 0) { focusSection = "modes"; modeIndex = 0 }
+      else focusSection = "header"
     } else if (dy < 0) {
       if (modeIndex <= 0) focusSection = "header"
       else modeIndex--
@@ -76,8 +97,9 @@ Panel {
   }
 
   function activateCursor() {
-    if (focusSection === "header") warp.toggle()
-    else warp.setMode(modes[modeIndex].id)
+    if (!usable) startSetup()
+    else if (focusSection === "modes") warp.setMode(modes[modeIndex].id)
+    else warp.toggle()
   }
 
   implicitWidth: button.implicitWidth
@@ -85,7 +107,7 @@ Panel {
 
   onOpenedChanged: if (opened) {
     cursorActive = false
-    focusSection = "header"
+    focusSection = usable ? "header" : "setup"
     Qt.callLater(function() { if (panel.loadedContent) panel.loadedContent.forceActiveFocus() })
   }
 
@@ -103,7 +125,13 @@ Panel {
     function close(): void { root.close() }
     function toggle(): void { root.toggle() }
     function toggleWarp(): string { warp.toggle(); return "ok" }
-    function status(): string { return warp.status }
+    function install(): string { return warp.openInstaller() ? "ok" : "install-warp.sh not found" }
+    function status(): string {
+      if (warp.setupStep === "install") return "NotInstalled"
+      if (warp.setupStep === "service") return "ServiceDown"
+      if (warp.setupStep === "register") return "Unregistered"
+      return warp.status
+    }
   }
 
   BarIconButton {
@@ -119,13 +147,15 @@ Panel {
           iconSize: button.iconSize
           fontFamily: root.fontFamily
           color: root.barIconColor
-          crossed: !warp.active
+          crossed: warp.ready && !warp.active
           pulsing: warp.transitioning
+          needsSetup: !warp.ready
+          badgeColor: root.urgent
         }
       }
     }
     onPressed: function(buttonCode) {
-      if (buttonCode === Qt.RightButton) warp.toggle()
+      if (buttonCode === Qt.RightButton) { if (warp.ready) warp.toggle(); else root.open() }
       else if (buttonCode === Qt.MiddleButton) { warp.refresh(); if (root.opened) warp.refreshDetails() }
       else root.toggle()
     }
@@ -182,8 +212,10 @@ Panel {
                 iconSize: Style.font.display
                 fontFamily: root.fontFamily
                 color: warp.active ? root.foreground : root.dim
-                crossed: !warp.active
+                crossed: warp.ready && !warp.active
                 pulsing: warp.transitioning
+                needsSetup: !warp.ready
+                badgeColor: root.urgent
               }
             }
 
@@ -217,6 +249,39 @@ Panel {
           font.family: root.fontFamily
           font.pixelSize: Style.font.bodySmall
           wrapMode: Text.WordWrap
+        }
+
+        Column {
+          visible: !root.usable
+          width: parent.width
+          spacing: Style.space(10)
+
+          Text {
+            width: parent.width
+            text: root.setupDetail
+            textFormat: Text.PlainText
+            color: root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.bodySmall
+            wrapMode: Text.WordWrap
+          }
+
+          Button {
+            width: parent.width
+            text: root.setupLabel
+            foreground: root.foreground
+            fontFamily: root.fontFamily
+            verticalPadding: Style.space(10)
+            bordered: true
+            active: true
+            hasCursor: root.cursorActive && root.focusSection === "setup"
+            onHovered: function(on) {
+              if (!on) return
+              root.cursorActive = true
+              root.focusSection = "setup"
+            }
+            onClicked: root.startSetup()
+          }
         }
 
         PanelSeparator { visible: root.usable; foreground: root.foreground }
