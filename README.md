@@ -52,7 +52,7 @@ Setting: `refreshIntervalSec` (2 to 300, default 5) in the widget's bar settings
 ## Troubleshooting
 
 - **Panel opens in the top-left corner instead of under the icon:** you are probably using a cloned or third-party bar that is older than your Omarchy install. Switch back to the built-in `omarchy.bar`, or update your bar clone.
-- **Icon shows "not installed":** `warp-cli` is not on `PATH` for the shell.
+- **Panel says "warp-cli not found":** install `cloudflare-warp`, enable `warp-svc`, and make sure `warp-cli` is on `PATH` for the shell.
 
 ## Remove
 
